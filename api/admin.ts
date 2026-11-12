@@ -3,7 +3,7 @@ import {
   getAllObservations,
   moderateObservationById,
   updateSafetyContactSetting,
-} from './_db.ts';
+} from './_db.js';
 
 function isAuthorizedAdmin(request: Request): boolean {
   const configuredPin = process.env.ADMIN_PIN;

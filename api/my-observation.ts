@@ -4,7 +4,7 @@ import {
   getOrCreateClientSession,
   LIVE_WINDOW_MS,
   withdrawObservationByIdOrClient,
-} from './_db.ts';
+} from './_db.js';
 
 export async function GET(request: Request): Promise<Response> {
   try {

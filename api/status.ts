@@ -1,7 +1,7 @@
 import {
   buildPublicDashboardPayload,
   getOrCreateClientSession,
-} from './_db.ts';
+} from './_db.js';
 
 export async function GET(request: Request): Promise<Response> {
   try {

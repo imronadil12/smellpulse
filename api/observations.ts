@@ -2,7 +2,7 @@ import {
   buildPublicDashboardPayload,
   getOrCreateClientSession,
   recordObservation,
-} from './_db.ts';
+} from './_db.js';
 
 export async function POST(request: Request): Promise<Response> {
   try {
