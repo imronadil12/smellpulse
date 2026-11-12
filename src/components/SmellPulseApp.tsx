@@ -334,10 +334,10 @@ export function SmellPulseApp() {
     return (
       <main
         id="admin-moderation"
-        className="min-h-screen w-full flex justify-center bg-[#0E0E0D] font-[family-name:var(--font-body)] text-[var(--text-primary)] select-none"
+        className="h-[100dvh] w-full flex items-center justify-center bg-[#0E0E0D] font-[family-name:var(--font-body)] text-[var(--text-primary)] select-none overflow-hidden"
       >
-        <div className="w-full max-w-[390px] min-h-screen bg-[var(--bg-page)] flex flex-col sm:rounded-[36px] sm:my-auto overflow-hidden shadow-2xl sp-enter">
-          <div className="flex-1 flex flex-col px-4 pt-5 pb-7 gap-4">
+        <div className="w-full sm:max-w-[390px] h-[100dvh] sm:h-[min(calc(100dvh-2rem),844px)] bg-[var(--bg-page)] flex flex-col sm:rounded-[36px] overflow-y-auto overscroll-contain shadow-2xl sp-enter">
+          <div className="flex-1 flex flex-col px-4 pt-[max(1.25rem,env(safe-area-inset-top))] pb-[max(1.75rem,env(safe-area-inset-bottom))] gap-4">
             {/* Admin Top Navigation Bar */}
             <header className="w-full flex items-center justify-between">
               <button
@@ -512,11 +512,11 @@ export function SmellPulseApp() {
   return (
     <main
       id="hero"
-      className="min-h-screen w-full flex justify-center bg-[#0E0E0D] font-[family-name:var(--font-body)] select-none"
+      className="h-[100dvh] w-full flex items-center justify-center bg-[#0E0E0D] font-[family-name:var(--font-body)] select-none overflow-hidden"
     >
-      <div className="relative w-full max-w-[390px] h-screen max-h-[844px] bg-[var(--bg-dark)] flex flex-col overflow-hidden sm:rounded-[36px] sm:my-auto shadow-2xl">
+      <div className="relative w-full sm:max-w-[390px] h-[100dvh] sm:h-[min(calc(100dvh-2rem),844px)] bg-[var(--bg-dark)] flex flex-col overflow-hidden sm:rounded-[36px] shadow-2xl">
         {/* Full Hero Screen Body with Real Photo & Subtle Zoom Reaction */}
-        <div className="relative flex-1 flex flex-col justify-between overflow-hidden pt-5">
+        <div className="relative flex-1 flex flex-col justify-between overflow-hidden pt-[max(1.25rem,env(safe-area-inset-top))]">
           <div
             aria-hidden="true"
             style={{ backgroundImage: `url("${HERO_PHOTO_URL}")` }}
@@ -572,7 +572,7 @@ export function SmellPulseApp() {
             <section
               id="quick-observation"
               aria-hidden={isPickerOpen}
-              className={`w-full px-4 pt-7 pb-6 flex flex-col gap-2.5 bg-gradient-to-b from-transparent to-black/75 transition-all duration-300 sp-ease-out ${
+              className={`w-full px-4 pt-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] flex flex-col gap-2.5 bg-gradient-to-b from-transparent to-black/75 transition-all duration-300 sp-ease-out ${
                 isPickerOpen
                   ? 'opacity-0 translate-y-6 pointer-events-none absolute inset-x-0 bottom-0'
                   : 'opacity-100 translate-y-0'
@@ -610,7 +610,7 @@ export function SmellPulseApp() {
             <section
               id="intensity-picker"
               aria-hidden={!isPickerOpen}
-              className={`mx-4 mb-6 p-5 rounded-[28px] bg-[var(--bg-dark)] shadow-[0_10px_28px_rgba(0,0,0,0.35)] flex flex-col gap-3.5 transition-all duration-300 sp-ease-out ${
+              className={`mx-4 mb-[max(1.5rem,env(safe-area-inset-bottom))] p-5 rounded-[28px] bg-[var(--bg-dark)] shadow-[0_10px_28px_rgba(0,0,0,0.35)] flex flex-col gap-3.5 transition-all duration-300 sp-ease-out ${
                 isPickerOpen
                   ? 'opacity-100 translate-y-0 scale-100'
                   : 'opacity-0 translate-y-8 scale-95 pointer-events-none absolute inset-x-0 bottom-0'
@@ -743,7 +743,7 @@ export function SmellPulseApp() {
               }
               touchStartRef.current = null;
             }}
-            className={`absolute inset-x-0 bottom-0 rounded-t-[32px] bg-[var(--bg-page)] pt-3 pb-7 flex flex-col gap-3.5 shadow-[0_-8px_24px_rgba(0,0,0,0.28)] overflow-hidden z-30 transition-transform duration-500 sp-ease-out ${
+            className={`absolute inset-x-0 bottom-0 max-h-[90%] rounded-t-[32px] bg-[var(--bg-page)] pt-3 pb-[max(1.75rem,env(safe-area-inset-bottom))] flex flex-col gap-3.5 shadow-[0_-8px_24px_rgba(0,0,0,0.28)] overflow-y-auto overscroll-contain z-30 transition-transform duration-500 sp-ease-out ${
               isSheetOpen ? 'translate-y-0 pointer-events-auto' : 'translate-y-full pointer-events-none'
             }`}
           >
