@@ -128,58 +128,16 @@ export async function ensureSchema(): Promise<NeonQueryFunction<false, false> | 
   return sql;
 }
 
-// Fallback store when DATABASE_URL is not configured yet
+// Fallback store when DATABASE_URL is not configured (starts empty — zero mock data)
 const memoryStore: {
   observations: DbObservation[];
   safetyContact: string;
   cooldownByHash: Map<string, number>;
-} = (() => {
-  const now = Date.now();
-  const m = 60 * 1000;
-  return {
-    safetyContact: 'Facilities Desk · Ext. 4400 / (555) 019-9400',
-    cooldownByHash: new Map<string, number>(),
-    observations: [
-      {
-        id: '00000000-0000-4000-8000-000000000001',
-        clientTokenHash: '#9a4c',
-        kind: 'odor',
-        intensity: 4,
-        submittedAt: now - 3 * m,
-      },
-      {
-        id: '00000000-0000-4000-8000-000000000002',
-        clientTokenHash: '#3f18',
-        kind: 'odor',
-        intensity: 3,
-        submittedAt: now - 7 * m,
-      },
-      {
-        id: '00000000-0000-4000-8000-000000000003',
-        clientTokenHash: '#7b02',
-        kind: 'odor',
-        intensity: 4,
-        submittedAt: now - 14 * m,
-      },
-      {
-        id: '00000000-0000-4000-8000-000000000004',
-        clientTokenHash: '#5d91',
-        kind: 'odor',
-        intensity: 3,
-        submittedAt: now - 22 * m,
-      },
-      {
-        id: '00000000-0000-4000-8000-000000000005',
-        clientTokenHash: '#e104',
-        kind: 'odor',
-        intensity: 5,
-        submittedAt: now - 18 * m,
-        hiddenAt: now - 15 * m,
-        hiddenReason: 'Spam burst',
-      },
-    ],
-  };
-})();
+} = {
+  safetyContact: 'Facilities Desk · Ext. 4400 / (555) 019-9400',
+  cooldownByHash: new Map<string, number>(),
+  observations: [],
+};
 
 export function getOrCreateClientSession(request: Request): {
   tokenHash: string;
@@ -309,20 +267,24 @@ export async function getAllObservations(): Promise<{
       ? (settingRows[0].value as string)
       : 'Facilities Desk · Ext. 4400 / (555) 019-9400';
 
-  const observations: DbObservation[] = rows.map((r) => ({
-    id: String(r.id),
-    clientTokenHash: `#${String(r.short_token || 'anon')}`,
-    kind: r.kind === 'no_odor' ? 'no_odor' : 'odor',
-    intensity:
-      typeof r.intensity === 'number'
-        ? (Math.min(5, Math.max(1, r.intensity)) as 1 | 2 | 3 | 4 | 5)
-        : null,
-    submittedAt: Math.round(Number(r.submitted_ms)),
-    supersededAt: r.superseded_ms ? Math.round(Number(r.superseded_ms)) : null,
-    withdrawnAt: r.withdrawn_ms ? Math.round(Number(r.withdrawn_ms)) : null,
-    hiddenAt: r.hidden_ms ? Math.round(Number(r.hidden_ms)) : null,
-    hiddenReason: typeof r.hidden_reason === 'string' ? r.hidden_reason : null,
-  }));
+  const observations: DbObservation[] = rows.map((r) => {
+    const parsedIntensity =
+      r.intensity !== null && r.intensity !== undefined ? Number(r.intensity) : null;
+    return {
+      id: String(r.id),
+      clientTokenHash: `#${String(r.short_token || 'anon')}`,
+      kind: r.kind === 'no_odor' ? 'no_odor' : 'odor',
+      intensity:
+        parsedIntensity !== null && Number.isFinite(parsedIntensity)
+          ? (Math.min(5, Math.max(1, parsedIntensity)) as 1 | 2 | 3 | 4 | 5)
+          : null,
+      submittedAt: Math.round(Number(r.submitted_ms)),
+      supersededAt: r.superseded_ms ? Math.round(Number(r.superseded_ms)) : null,
+      withdrawnAt: r.withdrawn_ms ? Math.round(Number(r.withdrawn_ms)) : null,
+      hiddenAt: r.hidden_ms ? Math.round(Number(r.hidden_ms)) : null,
+      hiddenReason: typeof r.hidden_reason === 'string' ? r.hidden_reason : null,
+    };
+  });
 
   return {
     observations,
@@ -331,37 +293,97 @@ export async function getAllObservations(): Promise<{
   };
 }
 
+function computeMedian(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0
+    ? (sorted[mid - 1] + sorted[mid]) / 2
+    : sorted[mid];
+}
+
+function formatShortTime(epochMs: number): string {
+  return new Date(epochMs).toLocaleTimeString('en-US', {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export async function buildPublicDashboardPayload(): Promise<PublicDashboardPayload> {
   const { observations, safetyContact, storageMode } = await getAllObservations();
   const nowMs = Date.now();
   const liveMetrics = computeLiveMetricsFromRows(observations, nowMs);
 
-  const sevenDayBars: DayBar[] = [
-    { day: 'Mon', count: 1, heightPx: 20 },
-    { day: 'Tue', count: 0, heightPx: 6 },
-    { day: 'Wed', count: 5, heightPx: 62 },
-    { day: 'Thu', count: 0, heightPx: 6 },
-    { day: 'Fri', count: 3, heightPx: 40 },
-    { day: 'Sat', count: 1, heightPx: 20 },
-    {
-      day: 'Today',
-      count: liveMetrics.activeCount,
-      heightPx: Math.min(72, Math.max(6, liveMetrics.activeCount * 13)),
-    },
-  ];
+  const activeOdor = observations.filter(
+    (o) => !o.supersededAt && !o.withdrawnAt && !o.hiddenAt && o.kind === 'odor'
+  );
+
+  // Rolling 7 calendar days ending Today
+  const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+  const dayStart = (ms: number) => {
+    const d = new Date(ms);
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  };
+  const todayStart = dayStart(nowMs);
+  const countsByDay = new Map<number, number>();
+  for (const obs of activeOdor) {
+    const start = dayStart(obs.submittedAt);
+    countsByDay.set(start, (countsByDay.get(start) ?? 0) + 1);
+  }
+
+  const rawDays = Array.from({ length: 7 }, (_, i) => {
+    const offset = i - 6;
+    const d = new Date(todayStart + offset * 24 * 60 * 60 * 1000);
+    const key = d.getTime();
+    return {
+      day: offset === 0 ? 'Today' : dayNames[d.getDay()],
+      count: countsByDay.get(key) ?? 0,
+    };
+  });
+  const maxDayCount = Math.max(1, ...rawDays.map((d) => d.count));
+  const sevenDayBars: DayBar[] = rawDays.map((d) => ({
+    day: d.day,
+    count: d.count,
+    heightPx:
+      d.count === 0 ? 6 : Math.min(64, Math.max(16, Math.round((d.count / maxDayCount) * 64))),
+  }));
 
   const totalWeekReports = sevenDayBars.reduce((sum, d) => sum + d.count, 0);
 
-  const episodes: EpisodeSummary[] = [
-    {
-      timeRange: 'Today, Live Window',
-      stats: `${liveMetrics.activeCount} reports · Median ${
-        liveMetrics.medianIntensity ?? 3.5
-      }/5`,
-    },
-    { timeRange: 'Fri, 2:10–2:55 PM', stats: '3 reports · Median 4.0/5' },
-    { timeRange: 'Wed, 11:05 AM–12:10 PM', stats: '5 reports · Median 3.0/5' },
-  ];
+  // Cluster active odor observations separated by <= EPISODE_GAP_MS (90m)
+  const sortedAsc = [...activeOdor].sort((a, b) => a.submittedAt - b.submittedAt);
+  const clusters: DbObservation[][] = [];
+  for (const obs of sortedAsc) {
+    const prevCluster = clusters[clusters.length - 1];
+    if (
+      prevCluster &&
+      obs.submittedAt - prevCluster[prevCluster.length - 1].submittedAt <= EPISODE_GAP_MS
+    ) {
+      prevCluster.push(obs);
+    } else {
+      clusters.push([obs]);
+    }
+  }
+
+  const episodes: EpisodeSummary[] = clusters
+    .reverse()
+    .slice(0, 4)
+    .map((cluster) => {
+      const first = cluster[0].submittedAt;
+      const last = cluster[cluster.length - 1].submittedAt;
+      const isToday = dayStart(first) === todayStart;
+      const dayPrefix = isToday ? 'Today' : dayNames[new Date(first).getDay()];
+      const timeRange =
+        first === last || Math.abs(last - first) < 60_000
+          ? `${dayPrefix}, ${formatShortTime(first)}`
+          : `${dayPrefix}, ${formatShortTime(first)}–${formatShortTime(last)}`;
+      const median = computeMedian(cluster.map((o) => o.intensity ?? 3));
+      const reportWord = cluster.length === 1 ? 'report' : 'reports';
+      return {
+        timeRange,
+        stats: `${cluster.length} ${reportWord} · Median ${median}/5`,
+      };
+    });
 
   return {
     liveMetrics,

@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import {
   Activity,
   Flame,
@@ -107,53 +107,57 @@ export function computeLiveMetrics(
   };
 }
 
-function createInitialObservations(now: number): OdorObservation[] {
-  const m = 60 * 1000;
-  return [
-    {
-      id: 'obs-1',
-      clientTokenHash: '#9a4c',
-      intensity: 4,
-      submittedAt: now - 3 * m,
+export interface DayBar {
+  day: string;
+  count: number;
+  heightPx: number;
+}
+
+export interface EpisodeSummary {
+  timeRange: string;
+  stats: string;
+}
+
+export interface DashboardPayload {
+  liveMetrics: LiveStatusSummary;
+  sevenDayBars: DayBar[];
+  totalWeekReports: number;
+  episodes: EpisodeSummary[];
+  safetyContact: string;
+  storageMode?: 'postgres' | 'memory';
+}
+
+function createEmptyDashboard(safetyContact: string): DashboardPayload {
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Today'];
+  return {
+    liveMetrics: {
+      activeCount: 0,
+      headline: 'NO RECENT ODOR REPORTS',
+      interpretation:
+        'Nobody has submitted an odor observation in the last 45m. Conditions are unknown — never a guarantee of safety.',
+      medianIntensity: null,
+      latestAgeMinutes: null,
     },
-    {
-      id: 'obs-2',
-      clientTokenHash: '#3f18',
-      intensity: 3,
-      submittedAt: now - 7 * m,
-    },
-    {
-      id: 'obs-3',
-      clientTokenHash: '#7b02',
-      intensity: 4,
-      submittedAt: now - 14 * m,
-    },
-    {
-      id: 'obs-4',
-      clientTokenHash: '#5d91',
-      intensity: 3,
-      submittedAt: now - 22 * m,
-    },
-    {
-      id: 'obs-5',
-      clientTokenHash: '#e104',
-      intensity: 5,
-      submittedAt: now - 18 * m,
-      hiddenAt: now - 15 * m,
-      hiddenReason: 'Spam burst',
-    },
-  ];
+    sevenDayBars: days.map((day) => ({ day, count: 0, heightPx: 6 })),
+    totalWeekReports: 0,
+    episodes: [],
+    safetyContact,
+  };
 }
 
 export function SmellPulseApp() {
-  const [nowMs] = useState<number>(() => Date.now());
-  const [clientToken] = useState<string>('#9a4c');
-  const [observations, setObservations] = useState<OdorObservation[]>(() =>
-    createInitialObservations(Date.now())
+  const [nowMs, setNowMs] = useState<number>(() => Date.now());
+  const [observations, setObservations] = useState<OdorObservation[]>([]);
+  const [safetyContact, setSafetyContact] = useState<string>(
+    'Facilities Desk · Ext. 4400 / (555) 019-9400'
+  );
+  const [dashboard, setDashboard] = useState<DashboardPayload>(() =>
+    createEmptyDashboard('Facilities Desk · Ext. 4400 / (555) 019-9400')
   );
 
   // UI Flow State
   const [isPickerOpen, setIsPickerOpen] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedReport, setSubmittedReport] = useState<{
     id: string;
     intensity: 1 | 2 | 3 | 4 | 5;
@@ -165,34 +169,87 @@ export function SmellPulseApp() {
   const [isAdminView, setIsAdminView] = useState<boolean>(() =>
     typeof window !== 'undefined' && window.location.search.includes('view=admin')
   );
-  const [safetyContact, setSafetyContact] = useState<string>(
-    'Facilities Desk · Ext. 4400 / (555) 019-9400'
+  const [adminPin, setAdminPin] = useState<string>(() =>
+    typeof window !== 'undefined' ? window.sessionStorage.getItem('sp_admin_pin') || '' : ''
   );
+  const [adminPinInput, setAdminPinInput] = useState<string>('');
+  const [isAdminLocked, setIsAdminLocked] = useState<boolean>(false);
+  const [adminAuthError, setAdminAuthError] = useState<string | null>(null);
   const [savedBanner, setSavedBanner] = useState<boolean>(false);
   const [pulseKey, setPulseKey] = useState<number>(0);
 
+  const applyDashboard = (payload: Partial<DashboardPayload> | null | undefined) => {
+    if (!payload || !payload.liveMetrics) return;
+    setDashboard((prev) => ({
+      liveMetrics: payload.liveMetrics ?? prev.liveMetrics,
+      sevenDayBars: Array.isArray(payload.sevenDayBars)
+        ? payload.sevenDayBars
+        : prev.sevenDayBars,
+      totalWeekReports:
+        typeof payload.totalWeekReports === 'number'
+          ? payload.totalWeekReports
+          : prev.totalWeekReports,
+      episodes: Array.isArray(payload.episodes) ? payload.episodes : prev.episodes,
+      safetyContact:
+        typeof payload.safetyContact === 'string'
+          ? payload.safetyContact
+          : prev.safetyContact,
+      storageMode: payload.storageMode ?? prev.storageMode,
+    }));
+    if (typeof payload.safetyContact === 'string') {
+      setSafetyContact(payload.safetyContact);
+    }
+  };
+
   useEffect(() => {
     document.title = 'SmellPulse — Office Odor Observation Board';
-    const syncFromApi = async () => {
+    const syncPublicStatus = async () => {
+      setNowMs(Date.now());
       try {
-        const res = await fetch('/api/admin');
+        const res = await fetch('/api/status');
         if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.observations) && data.observations.length > 0) {
-            setObservations(data.observations);
-          }
-          if (typeof data.safetyContact === 'string') {
-            setSafetyContact(data.safetyContact);
-          }
+          const data = (await res.json()) as DashboardPayload;
+          applyDashboard(data);
         }
       } catch {
-        // Fallback to local state when static preview is used
+        // Network unavailable — retain last known dashboard state
       }
     };
-    void syncFromApi();
-    const interval = window.setInterval(syncFromApi, 25000);
+    void syncPublicStatus();
+    const interval = window.setInterval(syncPublicStatus, 25000);
     return () => window.clearInterval(interval);
   }, []);
+
+  const fetchAdminData = async (pinToUse: string) => {
+    try {
+      const res = await fetch('/api/admin', {
+        headers: pinToUse ? { 'x-admin-pin': pinToUse } : {},
+      });
+      if (res.status === 401) {
+        setIsAdminLocked(true);
+        return false;
+      }
+      if (res.ok) {
+        const data = await res.json();
+        setObservations(Array.isArray(data.observations) ? data.observations : []);
+        if (typeof data.safetyContact === 'string') {
+          setSafetyContact(data.safetyContact);
+        }
+        setIsAdminLocked(false);
+        setAdminAuthError(null);
+        return true;
+      }
+    } catch {
+      // Ignore transient network errors
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (isAdminView) {
+      void fetchAdminData(adminPin);
+    }
+  }, [isAdminView, adminPin]);
 
   // 10-second Thank You countdown after submitting 1–5
   useEffect(() => {
@@ -211,28 +268,19 @@ export function SmellPulseApp() {
   // Touch swipe tracking for the sliding card (horizontal slide + vertical pull-down)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  const liveMetrics = useMemo(
-    () => computeLiveMetrics(observations, nowMs),
-    [observations, nowMs]
-  );
+  const liveMetrics = dashboard.liveMetrics;
+  const sevenDayBars = dashboard.sevenDayBars;
+  const totalWeekReports = dashboard.totalWeekReports;
+  const episodes = dashboard.episodes;
 
-  // Auto-submit when user chooses 1–5 -> switch to Thank You card for 10s
+  // Auto-submit when user chooses 1–5 -> persist to DB & switch to Thank You card for 10s
   const handleSelectIntensity = (level: 1 | 2 | 3 | 4 | 5) => {
     const timestamp = Date.now();
     const obsId = `obs-${timestamp}`;
-    const token = `${clientToken}-${timestamp.toString(36).slice(-3)}`;
     const levelLabel =
       INTENSITY_LEVELS.find((item) => item.value === level)?.label ?? 'Reported';
+    setSubmitError(null);
     setPulseKey((k) => k + 1);
-    setObservations((prev) => [
-      {
-        id: obsId,
-        clientTokenHash: token,
-        intensity: level,
-        submittedAt: nowMs,
-      },
-      ...prev,
-    ]);
     setSubmittedReport({ id: obsId, intensity: level, label: levelLabel });
     setThankYouSecondsLeft(10);
 
@@ -241,40 +289,46 @@ export function SmellPulseApp() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ kind: 'odor', intensity: level }),
     })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((data) => {
+      .then(async (r) => {
+        const data = await r.json().catch(() => null);
+        if (!r.ok) {
+          if (r.status === 429 && data?.error) {
+            setSubmitError(String(data.error));
+            setSubmittedReport(null);
+            setThankYouSecondsLeft(0);
+          }
+          return;
+        }
         if (data?.observation?.id) {
           setSubmittedReport((curr) =>
             curr ? { ...curr, id: String(data.observation.id) } : null
           );
-          setObservations((prev) =>
-            prev.map((o) =>
-              o.id === obsId ? { ...o, id: String(data.observation.id) } : o
-            )
-          );
+        }
+        if (data?.dashboard) {
+          applyDashboard(data.dashboard);
         }
       })
       .catch(() => {});
   };
 
   const handleWithdraw = () => {
-    const timestamp = Date.now();
     const targetId = submittedReport?.id;
     setPulseKey((k) => k + 1);
-    setObservations((prev) =>
-      prev.map((o) =>
-        (targetId ? o.id === targetId : o.clientTokenHash === clientToken) &&
-        !o.supersededAt &&
-        !o.withdrawnAt
-          ? { ...o, withdrawnAt: timestamp }
-          : o
-      )
-    );
     setSubmittedReport(null);
     setThankYouSecondsLeft(0);
 
-    const qs = targetId ? `?id=${encodeURIComponent(targetId)}` : '';
-    void fetch(`/api/my-observation${qs}`, { method: 'DELETE' }).catch(() => {});
+    const qs =
+      targetId && !targetId.startsWith('obs-')
+        ? `?id=${encodeURIComponent(targetId)}`
+        : '';
+    void fetch(`/api/my-observation${qs}`, { method: 'DELETE' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (data?.dashboard) {
+          applyDashboard(data.dashboard);
+        }
+      })
+      .catch(() => {});
   };
 
   const handleToggleModeration = (id: string) => {
@@ -294,36 +348,28 @@ export function SmellPulseApp() {
 
     void fetch('/api/admin', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(adminPin ? { 'x-admin-pin': adminPin } : {}),
+      },
       body: JSON.stringify({
         type: 'moderate',
         observationId: id,
         action: nextAction,
         reason: 'Spam burst',
       }),
-    }).catch(() => {});
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => {
+        if (Array.isArray(data?.observations)) {
+          setObservations(data.observations);
+        }
+        if (data?.dashboard) {
+          applyDashboard(data.dashboard);
+        }
+      })
+      .catch(() => {});
   };
-
-  const sevenDayBars = useMemo(() => {
-    return [
-      { day: 'Mon', count: 1, heightPx: 20 },
-      { day: 'Tue', count: 0, heightPx: 6 },
-      { day: 'Wed', count: 5, heightPx: 62 },
-      { day: 'Thu', count: 0, heightPx: 6 },
-      { day: 'Fri', count: 3, heightPx: 40 },
-      { day: 'Sat', count: 1, heightPx: 20 },
-      {
-        day: 'Today',
-        count: liveMetrics.activeCount,
-        heightPx: Math.max(6, liveMetrics.activeCount * 13),
-      },
-    ];
-  }, [liveMetrics.activeCount]);
-
-  const totalWeekReports = useMemo(
-    () => sevenDayBars.reduce((sum, d) => sum + d.count, 0),
-    [sevenDayBars]
-  );
 
   if (isAdminView) {
     const activeObs = observations.filter((o) => !o.supersededAt && !o.withdrawnAt);
@@ -361,148 +407,216 @@ export function SmellPulseApp() {
               </button>
             </header>
 
-            {/* Section 1 — Submission Rate Signals */}
-            <section
-              id="submission-rate-signals"
-              style={{ animationDelay: '50ms' }}
-              className="w-full rounded-[24px] bg-[var(--block-pink)] p-5 flex flex-col gap-3.5 sp-enter"
-            >
-              <span className="text-[11px] font-bold tracking-[1px] text-[var(--text-primary)]">
-                SUBMISSION-RATE &amp; SAFEGUARD SIGNALS
-              </span>
-              <h2 className="font-[family-name:var(--font-display)] text-[34px] font-extrabold leading-[0.95] text-[var(--text-primary)]">
-                NORMAL OFFICE ACTIVITY
-              </h2>
-              <div className="grid grid-cols-3 gap-2">
-                <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
-                  <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
-                    {activeObs.length}
-                  </span>
-                  <span className="text-[10px] font-bold text-[var(--text-secondary)]">
-                    1H REPORTS
-                  </span>
-                  <span className="text-[11px] text-[var(--text-primary)]">
-                    {liveCount} live · {hiddenCount} hid
-                  </span>
-                </div>
-                <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
-                  <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
-                    {uniqueTokens}
-                  </span>
-                  <span className="text-[10px] font-bold text-[var(--text-secondary)]">
-                    BROWSERS
-                  </span>
-                  <span className="text-[11px] text-[var(--text-primary)]">Hashed tokens</span>
-                </div>
-                <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
-                  <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
-                    1
-                  </span>
-                  <span className="text-[10px] font-bold text-[var(--text-secondary)]">
-                    COOLDOWNS
-                  </span>
-                  <span className="text-[11px] text-[var(--text-primary)]">Rate limited</span>
-                </div>
-              </div>
-            </section>
-
-            {/* Section 2 — Moderate Observations */}
-            <section
-              id="moderate-observations"
-              style={{ animationDelay: '110ms' }}
-              className="w-full rounded-[24px] bg-[var(--bg-card)] border border-[var(--border-light)] p-5 flex flex-col gap-3 sp-enter"
-            >
-              <h2 className="font-[family-name:var(--font-display)] text-[24px] font-extrabold text-[var(--text-primary)]">
-                MODERATE OBSERVATIONS
-              </h2>
-              <p className="text-[12px] text-[var(--text-secondary)] leading-snug">
-                Hidden observations are excluded from live status &amp; 7-day metrics. No raw
-                tokens or IPs exposed.
-              </p>
-              <div className="flex flex-col gap-2.5">
-                {activeObs.map((obs) => {
-                  const ageMin = Math.max(1, Math.round((nowMs - obs.submittedAt) / 60000));
-                  const isHidden = !!obs.hiddenAt;
-                  return (
-                    <div
-                      key={obs.id}
-                      className={`w-full p-3 rounded-[14px] flex items-center justify-between gap-2 transition-colors duration-300 sp-ease-out ${
-                        isHidden ? 'bg-[#F8E6EC]' : 'bg-[#F5F3EE]'
-                      }`}
-                    >
-                      <div className="flex flex-col gap-0.5">
-                        <span
-                          className={`text-[13px] font-bold text-[var(--text-primary)] transition-all duration-200 ${
-                            isHidden ? 'line-through opacity-70' : ''
-                          }`}
-                        >
-                          Odor · Intensity {obs.intensity}/5
-                        </span>
-                        <span className="text-[11px] text-[var(--text-secondary)]">
-                          {ageMin}m ago ·{' '}
-                          {isHidden
-                            ? `Hidden (${obs.hiddenReason})`
-                            : `Token ${obs.clientTokenHash} · Active`}
-                        </span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => handleToggleModeration(obs.id)}
-                        className={`px-3 py-2 rounded-[10px] text-[12px] font-bold border border-[var(--border-light)] hover:scale-105 active:scale-95 transition-all duration-200 sp-ease-out ${
-                          isHidden
-                            ? 'bg-[var(--bg-dark)] text-[var(--text-white)]'
-                            : 'bg-[var(--bg-card)] text-[var(--block-red)]'
-                        }`}
-                      >
-                        {isHidden ? 'Restore' : 'Hide'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Section 3 — Safety Contact Config */}
-            <section
-              id="safety-contact-config"
-              style={{ animationDelay: '170ms' }}
-              className="w-full rounded-[24px] bg-[var(--bg-dark)] p-5 flex flex-col gap-3 sp-enter"
-            >
-              <h2 className="font-[family-name:var(--font-display)] text-[22px] font-extrabold text-[var(--block-yellow)]">
-                EMERGENCY &amp; FACILITIES CONTACT
-              </h2>
-              <label className="w-full rounded-[12px] bg-[#232321] p-3 flex flex-col gap-1 focus-within:ring-1 focus-within:ring-[var(--block-yellow)] transition-shadow">
-                <span className="text-[10px] font-bold text-[var(--text-muted)]">
-                  DESIGNATED SAFETY CONTACT
-                </span>
-                <input
-                  type="text"
-                  value={safetyContact}
-                  onChange={(e) => {
-                    setSafetyContact(e.target.value);
-                    setSavedBanner(false);
-                  }}
-                  className="bg-transparent text-[13px] font-semibold text-[var(--text-white)] focus:outline-none"
-                />
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  setSavedBanner(true);
-                  void fetch('/api/admin', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                      type: 'settings',
-                      safetyContact,
-                    }),
-                  }).catch(() => {});
-                }}
-                className="w-full py-3 px-4 rounded-[12px] bg-[var(--block-yellow)] font-[family-name:var(--font-display)] text-[18px] font-extrabold text-[var(--text-primary)] text-center hover:brightness-105 active:scale-[0.98] transition-all duration-200 sp-ease-out"
+            {isAdminLocked ? (
+              <section
+                id="admin-pin-gate"
+                className="w-full rounded-[24px] bg-[var(--bg-card)] border border-[var(--border-light)] p-5 flex flex-col gap-3 sp-enter"
               >
-                {savedBanner ? 'CONTACT SETTINGS SAVED ✓' : 'SAVE CONTACT SETTINGS'}
-              </button>
-            </section>
+                <h2 className="font-[family-name:var(--font-display)] text-[26px] font-extrabold text-[var(--text-primary)]">
+                  ADMIN PIN REQUIRED
+                </h2>
+                <p className="text-[12px] text-[var(--text-secondary)]">
+                  Enter the moderation PIN to inspect live observations and update facilities contact details.
+                </p>
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const ok = await fetchAdminData(adminPinInput);
+                    if (ok) {
+                      setAdminPin(adminPinInput);
+                      window.sessionStorage.setItem('sp_admin_pin', adminPinInput);
+                    } else {
+                      setAdminAuthError('Incorrect PIN.');
+                    }
+                  }}
+                  className="flex flex-col gap-2.5"
+                >
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    value={adminPinInput}
+                    onChange={(e) => {
+                      setAdminPinInput(e.target.value);
+                      setAdminAuthError(null);
+                    }}
+                    placeholder="Enter PIN"
+                    className="w-full rounded-[12px] bg-[#F5F3EE] px-3.5 py-2.5 text-[14px] font-semibold text-[var(--text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--bg-dark)]"
+                  />
+                  {adminAuthError && (
+                    <span className="text-[12px] font-bold text-[var(--block-red)]">
+                      {adminAuthError}
+                    </span>
+                  )}
+                  <button
+                    type="submit"
+                    className="w-full py-3 px-4 rounded-[12px] bg-[var(--bg-dark)] font-[family-name:var(--font-display)] text-[18px] font-extrabold text-[var(--text-white)] text-center hover:brightness-110 active:scale-[0.98] transition-all"
+                  >
+                    UNLOCK ADMIN
+                  </button>
+                </form>
+              </section>
+            ) : (
+              <>
+                {/* Section 1 — Submission Rate Signals */}
+                <section
+                  id="submission-rate-signals"
+                  style={{ animationDelay: '50ms' }}
+                  className="w-full rounded-[24px] bg-[var(--block-pink)] p-5 flex flex-col gap-3.5 sp-enter"
+                >
+                  <span className="text-[11px] font-bold tracking-[1px] text-[var(--text-primary)]">
+                    SUBMISSION-RATE &amp; SAFEGUARD SIGNALS
+                  </span>
+                  <h2 className="font-[family-name:var(--font-display)] text-[34px] font-extrabold leading-[0.95] text-[var(--text-primary)]">
+                    {activeObs.length > 0 ? 'ACTIVE OFFICE SIGNALS' : 'QUIET OFFICE WINDOW'}
+                  </h2>
+                  <div className="grid grid-cols-3 gap-2">
+                    <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
+                      <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
+                        {activeObs.length}
+                      </span>
+                      <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                        7D REPORTS
+                      </span>
+                      <span className="text-[11px] text-[var(--text-primary)]">
+                        {liveCount} live · {hiddenCount} hid
+                      </span>
+                    </div>
+                    <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
+                      <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
+                        {uniqueTokens}
+                      </span>
+                      <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                        BROWSERS
+                      </span>
+                      <span className="text-[11px] text-[var(--text-primary)]">Hashed tokens</span>
+                    </div>
+                    <div className="rounded-[14px] bg-white/80 p-3 flex flex-col gap-0.5 transition-all duration-300 sp-ease-out">
+                      <span className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-primary)]">
+                        10s
+                      </span>
+                      <span className="text-[10px] font-bold text-[var(--text-secondary)]">
+                        COOLDOWN
+                      </span>
+                      <span className="text-[11px] text-[var(--text-primary)]">Rate limited</span>
+                    </div>
+                  </div>
+                </section>
+
+                {/* Section 2 — Moderate Observations */}
+                <section
+                  id="moderate-observations"
+                  style={{ animationDelay: '110ms' }}
+                  className="w-full rounded-[24px] bg-[var(--bg-card)] border border-[var(--border-light)] p-5 flex flex-col gap-3 sp-enter"
+                >
+                  <h2 className="font-[family-name:var(--font-display)] text-[24px] font-extrabold text-[var(--text-primary)]">
+                    MODERATE OBSERVATIONS
+                  </h2>
+                  <p className="text-[12px] text-[var(--text-secondary)] leading-snug">
+                    Hidden observations are excluded from live status &amp; 7-day metrics. No raw
+                    tokens or IPs exposed.
+                  </p>
+                  <div className="flex flex-col gap-2.5">
+                    {activeObs.length === 0 ? (
+                      <div className="w-full p-3.5 rounded-[14px] bg-[#F5F3EE] text-[12px] font-semibold text-[var(--text-secondary)]">
+                        No observations recorded in the database yet.
+                      </div>
+                    ) : (
+                      activeObs.map((obs) => {
+                        const ageMin = Math.max(1, Math.round((nowMs - obs.submittedAt) / 60000));
+                        const isHidden = !!obs.hiddenAt;
+                        return (
+                          <div
+                            key={obs.id}
+                            className={`w-full p-3 rounded-[14px] flex items-center justify-between gap-2 transition-colors duration-300 sp-ease-out ${
+                              isHidden ? 'bg-[#F8E6EC]' : 'bg-[#F5F3EE]'
+                            }`}
+                          >
+                            <div className="flex flex-col gap-0.5">
+                              <span
+                                className={`text-[13px] font-bold text-[var(--text-primary)] transition-all duration-200 ${
+                                  isHidden ? 'line-through opacity-70' : ''
+                                }`}
+                              >
+                                Odor · Intensity {obs.intensity}/5
+                              </span>
+                              <span className="text-[11px] text-[var(--text-secondary)]">
+                                {ageMin}m ago ·{' '}
+                                {isHidden
+                                  ? `Hidden (${obs.hiddenReason})`
+                                  : `Token ${obs.clientTokenHash} · Active`}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleModeration(obs.id)}
+                              className={`px-3 py-2 rounded-[10px] text-[12px] font-bold border border-[var(--border-light)] hover:scale-105 active:scale-95 transition-all duration-200 sp-ease-out ${
+                                isHidden
+                                  ? 'bg-[var(--bg-dark)] text-[var(--text-white)]'
+                                  : 'bg-[var(--bg-card)] text-[var(--block-red)]'
+                              }`}
+                            >
+                              {isHidden ? 'Restore' : 'Hide'}
+                            </button>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </section>
+
+                {/* Section 3 — Safety Contact Config */}
+                <section
+                  id="safety-contact-config"
+                  style={{ animationDelay: '170ms' }}
+                  className="w-full rounded-[24px] bg-[var(--bg-dark)] p-5 flex flex-col gap-3 sp-enter"
+                >
+                  <h2 className="font-[family-name:var(--font-display)] text-[22px] font-extrabold text-[var(--block-yellow)]">
+                    EMERGENCY &amp; FACILITIES CONTACT
+                  </h2>
+                  <label className="w-full rounded-[12px] bg-[#232321] p-3 flex flex-col gap-1 focus-within:ring-1 focus-within:ring-[var(--block-yellow)] transition-shadow">
+                    <span className="text-[10px] font-bold text-[var(--text-muted)]">
+                      DESIGNATED SAFETY CONTACT
+                    </span>
+                    <input
+                      type="text"
+                      value={safetyContact}
+                      onChange={(e) => {
+                        setSafetyContact(e.target.value);
+                        setSavedBanner(false);
+                      }}
+                      className="bg-transparent text-[13px] font-semibold text-[var(--text-white)] focus:outline-none"
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSavedBanner(true);
+                      void fetch('/api/admin', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          ...(adminPin ? { 'x-admin-pin': adminPin } : {}),
+                        },
+                        body: JSON.stringify({
+                          type: 'settings',
+                          safetyContact,
+                        }),
+                      })
+                        .then((r) => (r.ok ? r.json() : null))
+                        .then((data) => {
+                          if (data?.dashboard) {
+                            applyDashboard(data.dashboard);
+                          }
+                        })
+                        .catch(() => {});
+                    }}
+                    className="w-full py-3 px-4 rounded-[12px] bg-[var(--block-yellow)] font-[family-name:var(--font-display)] text-[18px] font-extrabold text-[var(--text-primary)] text-center hover:brightness-105 active:scale-[0.98] transition-all duration-200 sp-ease-out"
+                  >
+                    {savedBanner ? 'CONTACT SETTINGS SAVED ✓' : 'SAVE CONTACT SETTINGS'}
+                  </button>
+                </section>
+              </>
+            )}
           </div>
         </div>
       </main>
@@ -682,7 +796,7 @@ export function SmellPulseApp() {
                   </div>
 
                   <p className="text-[12px] font-bold text-[var(--block-yellow)]">
-                    HOW STRONG IS IT? TAP 1–5 TO SUBMIT AUTOMATICALLY
+                    {submitError || 'HOW STRONG IS IT? TAP 1–5 TO SUBMIT AUTOMATICALLY'}
                   </p>
 
                   <div className="w-full grid grid-cols-5 gap-[7px]">
@@ -926,7 +1040,8 @@ export function SmellPulseApp() {
                         LAST 7 DAYS ACTIVITY
                       </h2>
                       <span className="text-[12px] font-semibold text-[var(--text-primary)]">
-                        {totalWeekReports} odor reports · 3 estimated episodes
+                        {totalWeekReports} odor reports · {episodes.length} estimated{' '}
+                        {episodes.length === 1 ? 'episode' : 'episodes'}
                       </span>
                     </div>
 
@@ -971,28 +1086,25 @@ export function SmellPulseApp() {
                       <span className="text-[11px] font-bold text-[var(--text-primary)]">
                         POSSIBLE ODOR EPISODES (ESTIMATED CLUSTERS, &lt;90M GAP)
                       </span>
-                      {[
-                        [
-                          'Today, 9:15–9:38 AM',
-                          `${liveMetrics.activeCount} reports · Median ${
-                            liveMetrics.medianIntensity ?? 3.5
-                          }/5`,
-                        ],
-                        ['Fri, 2:10–2:55 PM', '3 reports · Median 4.0/5'],
-                        ['Wed, 11:05 AM–12:10 PM', '5 reports · Median 3.0/5'],
-                      ].map(([timeRange, stats]) => (
-                        <div
-                          key={timeRange}
-                          className="w-full py-2.5 px-3 rounded-[12px] bg-white/80 hover:bg-white transition-colors flex items-center justify-between"
-                        >
-                          <span className="text-[12px] font-bold text-[var(--text-primary)]">
-                            {timeRange}
-                          </span>
-                          <span className="text-[12px] font-semibold text-[var(--text-secondary)]">
-                            {stats}
-                          </span>
+                      {episodes.length === 0 ? (
+                        <div className="w-full py-2.5 px-3 rounded-[12px] bg-white/80 text-[12px] font-semibold text-[var(--text-secondary)]">
+                          No clustered odor episodes in the last 7 days.
                         </div>
-                      ))}
+                      ) : (
+                        episodes.map(({ timeRange, stats }) => (
+                          <div
+                            key={`${timeRange}-${stats}`}
+                            className="w-full py-2.5 px-3 rounded-[12px] bg-white/80 hover:bg-white transition-colors flex items-center justify-between"
+                          >
+                            <span className="text-[12px] font-bold text-[var(--text-primary)]">
+                              {timeRange}
+                            </span>
+                            <span className="text-[12px] font-semibold text-[var(--text-secondary)]">
+                              {stats}
+                            </span>
+                          </div>
+                        ))
+                      )}
                     </div>
                   </div>
                 </div>
