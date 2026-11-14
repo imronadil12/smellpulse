@@ -32,15 +32,16 @@ export interface LiveStatusSummary {
 export const LIVE_WINDOW_MS = 45 * 60 * 1000;
 export const EPISODE_GAP_MS = 90 * 60 * 1000;
 
-const HERO_PHOTO_URL =
-  'https://images.unsplash.com/photo-1744625846268-14c81de2f094?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w4NDM0ODN8MHwxfHJhbmRvbXx8fHx8fHx8fDE3OTQ0NjIxODN8&ixlib=rb-4.1.0&q=80&w=1080';
+const HERO_PHOTO_URL = './media/hero-default.jpg';
+const INHALING_VIDEO_URL = './media/inhaling.mp4';
+const INHALING_POSTER_URL = './media/inhaling-frame.jpg';
 
-const INTENSITY_LEVELS: { value: 1 | 2 | 3 | 4 | 5; label: string }[] = [
-  { value: 1, label: 'Faint' },
-  { value: 2, label: 'Mild' },
-  { value: 3, label: 'Mod' },
-  { value: 4, label: 'Strong' },
-  { value: 5, label: 'Max' },
+const INTENSITY_LEVELS: { value: 1 | 2 | 3 | 4 | 5; label: string; image: string }[] = [
+  { value: 1, label: 'Faint', image: './media/rate-1.jpg' },
+  { value: 2, label: 'Mild', image: './media/rate-2.jpg' },
+  { value: 3, label: 'Mod', image: './media/rate-3.jpg' },
+  { value: 4, label: 'Strong', image: './media/rate-4.jpg' },
+  { value: 5, label: 'Max', image: './media/rate-5.jpg' },
 ];
 
 export function computeLiveMetrics(
@@ -267,6 +268,39 @@ export function SmellPulseApp() {
 
   // Touch swipe tracking for the sliding card (horizontal slide + vertical pull-down)
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const inhalingVideoRef = useRef<HTMLVideoElement | null>(null);
+
+  // Preload default and intensity images so rate selection swaps the hero immediately
+  useEffect(() => {
+    [HERO_PHOTO_URL, INHALING_POSTER_URL, ...INTENSITY_LEVELS.map((l) => l.image)].forEach((src) => {
+      const img = new window.Image();
+      img.src = src;
+    });
+  }, []);
+
+  useEffect(() => {
+    const video = inhalingVideoRef.current;
+    if (!video) return;
+    if (!isPickerOpen || submittedReport) {
+      video.pause();
+    }
+  }, [isPickerOpen, submittedReport]);
+
+  const startInhalingVideo = () => {
+    const video = inhalingVideoRef.current;
+    if (!video) return;
+    video.currentTime = 0;
+    video.muted = false;
+    video.play().catch(() => {
+      video.muted = true;
+      video.play().catch(() => {});
+    });
+  };
+
+  const submittedRateImage = submittedReport
+    ? INTENSITY_LEVELS.find((item) => item.value === submittedReport.intensity)?.image ??
+      HERO_PHOTO_URL
+    : null;
 
   const liveMetrics = dashboard.liveMetrics;
   const sevenDayBars = dashboard.sevenDayBars;
@@ -316,6 +350,7 @@ export function SmellPulseApp() {
     setPulseKey((k) => k + 1);
     setSubmittedReport(null);
     setThankYouSecondsLeft(0);
+    startInhalingVideo();
 
     const qs =
       targetId && !targetId.startsWith('obs-')
@@ -629,18 +664,30 @@ export function SmellPulseApp() {
       className="h-[100dvh] w-full flex items-center justify-center bg-[#0E0E0D] font-[family-name:var(--font-body)] select-none overflow-hidden"
     >
       <div className="relative w-full sm:max-w-[390px] h-[100dvh] sm:h-[min(calc(100dvh-2rem),844px)] bg-[var(--bg-dark)] flex flex-col overflow-hidden sm:rounded-[36px] shadow-2xl">
-        {/* Full Hero Screen Body with Real Photo & Subtle Zoom Reaction */}
+        {/* Full Hero Screen Body: Default Photo, Inhaling Video (on Click), or Selected Intensity Portrait */}
         <div className="relative flex-1 flex flex-col justify-between overflow-hidden pt-[max(1.25rem,env(safe-area-inset-top))]">
           <div
             aria-hidden="true"
-            style={{ backgroundImage: `url("${HERO_PHOTO_URL}")` }}
-            className={`absolute inset-0 bg-cover bg-center transition-transform duration-700 sp-ease-out ${
+            style={{ backgroundImage: `url("${submittedRateImage ?? HERO_PHOTO_URL}")` }}
+            className={`absolute inset-0 bg-cover bg-top transition-transform duration-700 sp-ease-out ${
               isSheetOpen
                 ? 'scale-[1.06] brightness-75'
                 : isPickerOpen
                 ? 'scale-[1.03]'
                 : 'scale-100'
             }`}
+          />
+          <video
+            ref={inhalingVideoRef}
+            src={INHALING_VIDEO_URL}
+            poster={INHALING_POSTER_URL}
+            loop
+            playsInline
+            preload="auto"
+            aria-hidden="true"
+            className={`absolute inset-0 w-full h-full object-cover object-top pointer-events-none transition-all duration-300 sp-ease-out ${
+              isPickerOpen && !submittedReport ? 'opacity-100' : 'opacity-0'
+            } ${isSheetOpen ? 'scale-[1.06] brightness-75' : 'scale-100'}`}
           />
 
           {/* Top Navigation Bar */}
@@ -699,6 +746,7 @@ export function SmellPulseApp() {
                   setSubmittedReport(null);
                   setThankYouSecondsLeft(0);
                   setIsPickerOpen(true);
+                  startInhalingVideo();
                 }}
                 className="group w-full py-[18px] px-5 rounded-[24px] bg-[var(--block-red)] shadow-[0_8px_20px_rgba(0,0,0,0.25)] hover:shadow-[0_12px_28px_rgba(232,60,11,0.45)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.97] flex items-center justify-center gap-3 transition-all duration-200 sp-ease-out"
               >
@@ -751,14 +799,23 @@ export function SmellPulseApp() {
                     </span>
                   </div>
 
-                  <div className="w-full p-4 rounded-[18px] bg-[var(--block-yellow)] flex flex-col gap-1">
-                    <h3 className="font-[family-name:var(--font-display)] text-[28px] font-extrabold leading-[0.98] text-[var(--text-primary)]">
-                      THANK YOU FOR REPORTING
-                    </h3>
-                    <p className="text-[12px] font-semibold text-[var(--text-primary)] leading-snug">
-                      Recorded Intensity {submittedReport.intensity}/5 (
-                      {submittedReport.label}) in the 45m live window.
-                    </p>
+                  <div className="w-full p-3.5 rounded-[18px] bg-[var(--block-yellow)] flex items-center gap-3">
+                    {submittedRateImage && (
+                      <img
+                        src={submittedRateImage}
+                        alt={`Intensity ${submittedReport.intensity} (${submittedReport.label})`}
+                        className="w-[52px] h-[72px] rounded-[12px] object-cover object-top shrink-0 border-2 border-[var(--text-primary)]/15 shadow-sm"
+                      />
+                    )}
+                    <div className="flex flex-col gap-1 min-w-0">
+                      <h3 className="font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-[0.98] text-[var(--text-primary)]">
+                        THANK YOU FOR REPORTING
+                      </h3>
+                      <p className="text-[12px] font-semibold text-[var(--text-primary)] leading-snug">
+                        Recorded Intensity {submittedReport.intensity}/5 (
+                        {submittedReport.label}) in the 45m live window.
+                      </p>
+                    </div>
                   </div>
 
                   <div className="w-full flex items-center justify-between">
@@ -800,21 +857,27 @@ export function SmellPulseApp() {
                   </p>
 
                   <div className="w-full grid grid-cols-5 gap-[7px]">
-                    {INTENSITY_LEVELS.map(({ value, label }, idx) => (
+                    {INTENSITY_LEVELS.map(({ value, label, image }, idx) => (
                       <button
                         key={value}
                         id={`rate-button-${value}`}
                         type="button"
+                        aria-label={`Intensity ${value}: ${label}`}
                         onClick={() => handleSelectIntensity(value)}
                         style={{
+                          backgroundImage: `url("${image}")`,
                           transitionDelay: isPickerOpen ? `${idx * 25}ms` : '0ms',
                         }}
-                        className="py-3.5 px-1 rounded-[16px] flex flex-col items-center gap-1 bg-[#262624] hover:bg-[var(--block-red)] group transition-all duration-200 sp-ease-out hover:-translate-y-0.5 active:scale-90"
+                        className="relative h-[92px] rounded-[16px] overflow-hidden flex flex-col items-center justify-end pb-2 px-1 bg-[#262624] bg-cover bg-top border border-white/15 hover:border-[var(--block-red)] hover:ring-2 hover:ring-[var(--block-red)] group transition-all duration-200 sp-ease-out hover:-translate-y-0.5 active:scale-90"
                       >
-                        <span className="font-[family-name:var(--font-display)] text-[28px] font-extrabold leading-none text-[var(--text-white)]">
+                        <span
+                          aria-hidden="true"
+                          className="absolute inset-0 bg-gradient-to-b from-black/5 via-black/30 to-black/90 group-hover:from-[#E83C0B]/15 group-hover:to-[#E83C0B]/85 transition-colors"
+                        />
+                        <span className="relative z-10 font-[family-name:var(--font-display)] text-[26px] font-extrabold leading-none text-[var(--text-white)] drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
                           {value}
                         </span>
-                        <span className="text-[10px] font-bold text-[var(--text-muted)] group-hover:text-[#FFE0D6]">
+                        <span className="relative z-10 text-[10px] font-bold text-white/90 group-hover:text-[#FFE0D6] drop-shadow-[0_1px_2px_rgba(0,0,0,0.85)]">
                           {label}
                         </span>
                       </button>
