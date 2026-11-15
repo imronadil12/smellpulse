@@ -157,6 +157,7 @@ export function SmellPulseApp() {
   );
 
   // UI Flow State
+  const [isInhaling, setIsInhaling] = useState<boolean>(false);
   const [isPickerOpen, setIsPickerOpen] = useState<boolean>(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submittedReport, setSubmittedReport] = useState<{
@@ -258,6 +259,7 @@ export function SmellPulseApp() {
     if (thankYouSecondsLeft <= 0) {
       setSubmittedReport(null);
       setIsPickerOpen(false);
+      setIsInhaling(false);
       return;
     }
     const timer = window.setTimeout(() => {
@@ -281,19 +283,24 @@ export function SmellPulseApp() {
   useEffect(() => {
     const video = inhalingVideoRef.current;
     if (!video) return;
-    if (!isPickerOpen || submittedReport) {
+    if ((!isInhaling && !isPickerOpen) || submittedReport) {
       video.pause();
     }
-  }, [isPickerOpen, submittedReport]);
+  }, [isInhaling, isPickerOpen, submittedReport]);
 
   const startInhalingVideo = () => {
     const video = inhalingVideoRef.current;
-    if (!video) return;
+    if (!video) {
+      setIsPickerOpen(true);
+      return;
+    }
     video.currentTime = 0;
     video.muted = false;
     video.play().catch(() => {
       video.muted = true;
-      video.play().catch(() => {});
+      video.play().catch(() => {
+        setIsPickerOpen(true);
+      });
     });
   };
 
@@ -350,7 +357,6 @@ export function SmellPulseApp() {
     setPulseKey((k) => k + 1);
     setSubmittedReport(null);
     setThankYouSecondsLeft(0);
-    startInhalingVideo();
 
     const qs =
       targetId && !targetId.startsWith('obs-')
@@ -672,7 +678,7 @@ export function SmellPulseApp() {
             className={`absolute inset-0 bg-cover bg-top transition-transform duration-700 sp-ease-out ${
               isSheetOpen
                 ? 'scale-[1.06] brightness-75'
-                : isPickerOpen
+                : isInhaling || isPickerOpen
                 ? 'scale-[1.03]'
                 : 'scale-100'
             }`}
@@ -681,12 +687,13 @@ export function SmellPulseApp() {
             ref={inhalingVideoRef}
             src={INHALING_VIDEO_URL}
             poster={INHALING_POSTER_URL}
-            loop
             playsInline
             preload="auto"
+            onEnded={() => setIsPickerOpen(true)}
+            onError={() => setIsPickerOpen(true)}
             aria-hidden="true"
             className={`absolute inset-0 w-full h-full object-cover object-top pointer-events-none transition-all duration-300 sp-ease-out ${
-              isPickerOpen && !submittedReport ? 'opacity-100' : 'opacity-0'
+              (isInhaling || isPickerOpen) && !submittedReport ? 'opacity-100' : 'opacity-0'
             } ${isSheetOpen ? 'scale-[1.06] brightness-75' : 'scale-100'}`}
           />
 
@@ -732,9 +739,9 @@ export function SmellPulseApp() {
             {/* Primary CTA Dock */}
             <section
               id="quick-observation"
-              aria-hidden={isPickerOpen}
+              aria-hidden={isInhaling || isPickerOpen}
               className={`w-full px-4 pt-7 pb-[max(1.5rem,env(safe-area-inset-bottom))] flex flex-col gap-2.5 bg-gradient-to-b from-transparent to-black/75 transition-all duration-300 sp-ease-out ${
-                isPickerOpen
+                isInhaling || isPickerOpen
                   ? 'opacity-0 translate-y-6 pointer-events-none absolute inset-x-0 bottom-0'
                   : 'opacity-100 translate-y-0'
               }`}
@@ -745,7 +752,8 @@ export function SmellPulseApp() {
                 onClick={() => {
                   setSubmittedReport(null);
                   setThankYouSecondsLeft(0);
-                  setIsPickerOpen(true);
+                  setIsInhaling(true);
+                  setIsPickerOpen(false);
                   startInhalingVideo();
                 }}
                 className="group w-full py-[18px] px-5 rounded-[24px] bg-[var(--block-red)] shadow-[0_8px_20px_rgba(0,0,0,0.25)] hover:shadow-[0_12px_28px_rgba(232,60,11,0.45)] hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.97] flex items-center justify-center gap-3 transition-all duration-200 sp-ease-out"
@@ -844,7 +852,10 @@ export function SmellPulseApp() {
                     <button
                       id="close-picker-button"
                       type="button"
-                      onClick={() => setIsPickerOpen(false)}
+                      onClick={() => {
+                        setIsPickerOpen(false);
+                        setIsInhaling(false);
+                      }}
                       aria-label="Close intensity picker"
                       className="w-7 h-7 rounded-full bg-[#2A2A27] hover:bg-[#3A3A36] active:scale-90 flex items-center justify-center transition-all duration-150 sp-ease-out"
                     >
